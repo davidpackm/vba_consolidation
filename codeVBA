@@ -1,0 +1,1279 @@
+Option Explicit
+
+' ========================================
+' MODULE 1 : Phase 1 - Vérification de structure
+' ========================================
+
+Public Sub VerifierStructure()
+    Dim ws As Worksheet
+    Dim lastCol As Long, lastRow As Long
+    Dim colNames As Variant
+    Dim i As Long, colIndex As Long
+    Dim msg As String
+    Dim hasError As Boolean
+    Dim c As Range
+    Dim nbErreurs As Long
+    
+    ' Vérifier que la feuille existe
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Données")
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        MsgBox "La feuille 'Données' n'existe pas !" & vbCrLf & _
+               "Veuillez créer une feuille nommée 'Données' avec vos données.", _
+               vbCritical, "Erreur"
+        Exit Sub
+    End If
+    
+    ' Noms de colonnes obligatoires
+    colNames = Array("Hôpital", "Spécialité", "Durée_Séjour(jours)", "Coût(€)", "Date_Entrée", "Sexe")
+    
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).row
+    
+    ' Vérifier qu'il y a au moins une ligne d'en-tête
+    If lastRow < 1 Then
+        MsgBox "La feuille 'Données' est vide !", vbCritical, "Erreur"
+        Exit Sub
+    End If
+    
+    ' Nettoyer anciens formats (fond)
+    ws.Cells.Interior.ColorIndex = xlNone
+    
+    msg = ""
+    hasError = False
+    nbErreurs = 0
+    
+    ' ========================================
+    ' 1) Vérifier présence des colonnes obligatoires
+    ' ========================================
+    
+    For i = LBound(colNames) To UBound(colNames)
+        colIndex = TrouverColonne(ws, CStr(colNames(i)))
+        If colIndex = 0 Then
+            msg = msg & "- Colonne manquante : " & colNames(i) & vbCrLf
+            hasError = True
+            nbErreurs = nbErreurs + 1
+        End If
+    Next i
+    
+    ' Si colonnes manquantes, on signale et on arrête
+    If hasError Then
+        MsgBox "Structure NON conforme :" & vbCrLf & vbCrLf & msg & vbCrLf & _
+               "Nombre d'anomalies : " & nbErreurs, _
+               vbCritical, "Vérification structure"
+        Exit Sub
+    End If
+    
+    ' ========================================
+    ' 2) Vérifier les formats des colonnes
+    ' ========================================
+    
+    Dim colDate As Long, colDuree As Long, colCout As Long
+    
+    colDate = TrouverColonne(ws, "Date_Entrée")
+    colDuree = TrouverColonne(ws, "Durée_Séjour(jours)")
+    colCout = TrouverColonne(ws, "Coût(€)")
+    
+    ' Réinitialiser le compteur d'erreurs
+    nbErreurs = 0
+    msg = ""
+    
+    ' Boucle sur les lignes de données
+    For i = 2 To lastRow
+        
+        ' Date_Entrée doit être une date valide
+        Set c = ws.Cells(i, colDate)
+        If Not IsEmpty(c.Value) Then
+            If Not IsDate(c.Value) Then
+                c.Interior.Color = vbRed
+                msg = msg & "Ligne " & i & " : Date_Entrée invalide" & vbCrLf
+                hasError = True
+                nbErreurs = nbErreurs + 1
+            End If
+        Else
+            ' Date manquante
+            c.Interior.Color = vbRed
+            msg = msg & "Ligne " & i & " : Date_Entrée manquante" & vbCrLf
+            hasError = True
+            nbErreurs = nbErreurs + 1
+        End If
+        
+        ' Durée_Séjour doit être numérique
+        Set c = ws.Cells(i, colDuree)
+        If Not IsEmpty(c.Value) Then
+            If Not IsNumeric(c.Value) Then
+                c.Interior.Color = vbRed
+                msg = msg & "Ligne " & i & " : Durée_Séjour non numérique" & vbCrLf
+                hasError = True
+                nbErreurs = nbErreurs + 1
+            End If
+        End If
+        
+        ' Coût doit être numérique
+        Set c = ws.Cells(i, colCout)
+        If Not IsEmpty(c.Value) Then
+            If Not IsNumeric(c.Value) Then
+                c.Interior.Color = vbRed
+                msg = msg & "Ligne " & i & " : Coût non numérique" & vbCrLf
+                hasError = True
+                nbErreurs = nbErreurs + 1
+            End If
+        End If
+        
+    Next i
+    
+    ' ========================================
+    ' 3) Message final
+    ' ========================================
+    
+    If hasError Then
+        MsgBox "Structure vérifiée : " & nbErreurs & " anomalie(s) détectée(s)." & vbCrLf & _
+               "Les cellules problématiques sont colorées en rouge." & vbCrLf & vbCrLf & _
+               "Détails :" & vbCrLf & msg, _
+               vbExclamation, "Vérification structure"
+    Else
+        MsgBox "? Structure conforme !" & vbCrLf & vbCrLf & _
+               "Toutes les colonnes obligatoires sont présentes et les formats sont corrects." & vbCrLf & _
+               "Nombre de lignes vérifiées : " & (lastRow - 1), _
+               vbInformation, "Vérification structure"
+    End If
+    
+End Sub
+
+' ========================================
+' FONCTION UTILITAIRE : TrouverColonne (AMÉLIORÉE)
+' ========================================
+' Cette fonction recherche une colonne par son nom de manière flexible
+' Elle gère les différences de casse, espaces et caractères spéciaux
+
+Public Function TrouverColonne(ws As Worksheet, nomColonne As String) As Long
+    Dim c As Range
+    Dim valeurCellule As String
+    Dim nomRecherche As String
+    Dim lastCol As Long
+    
+    ' Normaliser le nom recherché (majuscules, sans espaces au début/fin)
+    nomRecherche = UCase(Trim(nomColonne))
+    
+    ' Déterminer la dernière colonne pour limiter la recherche
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    If lastCol > 50 Then lastCol = 50  ' Limiter à 50 colonnes max pour performance
+    
+    ' Parcourir les en-têtes de colonnes (ligne 1)
+    For Each c In ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol))
+        If Not IsEmpty(c.Value) Then
+            ' Normaliser la valeur de la cellule
+            valeurCellule = UCase(Trim(CStr(c.Value)))
+            
+            ' Comparaison exacte d'abord
+            If valeurCellule = nomRecherche Then
+                TrouverColonne = c.Column
+                Exit Function
+            End If
+            
+            ' Comparaison flexible : chercher par mot-clé principal
+            ' Pour gérer les variations comme "Durée_Séjour(jours)" vs "Durée_Séjour (jours)"
+            If InStr(valeurCellule, nomRecherche) > 0 Then
+                TrouverColonne = c.Column
+                Exit Function
+            End If
+            
+            ' Comparaison par mots-clés spécifiques
+            If RechercheParMotCle(valeurCellule, nomRecherche) Then
+                TrouverColonne = c.Column
+                Exit Function
+            End If
+        End If
+    Next c
+    
+    ' Si aucune colonne trouvée
+    TrouverColonne = 0
+    
+End Function
+
+' ========================================
+' FONCTION AUXILIAIRE : RechercheParMotCle
+' ========================================
+' Recherche intelligente par mots-clés pour gérer les variations de nommage
+
+Private Function RechercheParMotCle(valeurCellule As String, nomRecherche As String) As Boolean
+    
+    RechercheParMotCle = False
+    
+    ' Nettoyer les chaînes (enlever espaces, underscores, parenthèses)
+    Dim val As String, nom As String
+    val = Replace(valeurCellule, "_", "")
+    val = Replace(val, " ", "")
+    val = Replace(val, "(", "")
+    val = Replace(val, ")", "")
+    
+    nom = Replace(nomRecherche, "_", "")
+    nom = Replace(nom, " ", "")
+    nom = Replace(nom, "(", "")
+    nom = Replace(nom, ")", "")
+    
+    ' Comparaison après nettoyage
+    If val = nom Then
+        RechercheParMotCle = True
+        Exit Function
+    End If
+    
+    ' Recherche par mots-clés spécifiques pour les colonnes courantes
+    Select Case True
+        ' Colonne Hôpital
+        Case InStr(nom, "HOPITAL") > 0 Or InStr(nom, "HÔPITAL") > 0
+            If InStr(val, "HOPITAL") > 0 Or InStr(val, "HÔPITAL") > 0 Then
+                RechercheParMotCle = True
+            End If
+            
+        ' Colonne Spécialité
+        Case InStr(nom, "SPECIAL") > 0 Or InStr(nom, "SPÉCIAL") > 0
+            If InStr(val, "SPECIAL") > 0 Or InStr(val, "SPÉCIAL") > 0 Then
+                RechercheParMotCle = True
+            End If
+            
+        ' Colonne Durée
+        Case InStr(nom, "DUREE") > 0 Or InStr(nom, "DURÉE") > 0
+            If InStr(val, "DUREE") > 0 Or InStr(val, "DURÉE") > 0 Or InStr(val, "SEJOUR") > 0 Or InStr(val, "SÉJOUR") > 0 Then
+                RechercheParMotCle = True
+            End If
+            
+        ' Colonne Coût
+        Case InStr(nom, "COUT") > 0 Or InStr(nom, "COÛT") > 0
+            If InStr(val, "COUT") > 0 Or InStr(val, "COÛT") > 0 Then
+                RechercheParMotCle = True
+            End If
+            
+        ' Colonne Date
+        Case InStr(nom, "DATE") > 0
+            If InStr(val, "DATE") > 0 Or InStr(val, "ENTREE") > 0 Or InStr(val, "ENTRÉE") > 0 Then
+                RechercheParMotCle = True
+            End If
+            
+        ' Colonne Sexe
+        Case InStr(nom, "SEXE") > 0
+            If InStr(val, "SEXE") > 0 Or InStr(val, "GENRE") > 0 Then
+                RechercheParMotCle = True
+            End If
+    End Select
+    
+End Function
+
+' ========================================
+' FONCTION UTILITAIRE : AfficherColonnesDebug (OPTIONNELLE)
+' ========================================
+' Utilisez cette fonction pour déboguer et voir les vrais noms de colonnes
+
+Public Sub AfficherColonnesDebug()
+    Dim ws As Worksheet
+    Dim i As Long
+    Dim msg As String
+    Dim lastCol As Long
+    
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Données")
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        MsgBox "Feuille 'Données' introuvable !", vbCritical
+        Exit Sub
+    End If
+    
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    msg = "Colonnes trouvées dans 'Données' :" & vbCrLf & vbCrLf
+    
+    For i = 1 To lastCol
+        If Not IsEmpty(ws.Cells(1, i).Value) Then
+            msg = msg & "Colonne " & i & " : [" & ws.Cells(1, i).Value & "]" & vbCrLf
+        End If
+    Next i
+    
+    MsgBox msg, vbInformation, "Debug - En-têtes de colonnes"
+    
+End Sub
+
+
+
+Option Explicit
+
+Public Sub NettoyerDonnees()
+    ' Module2 : Phase 2 - Nettoyage automatique des données
+
+    
+    Dim wsData As Worksheet, wsClean As Worksheet, wsLog As Worksheet
+    Dim lastRow As Long, lastCol As Long
+    Dim colHop As Long, colSpec As Long, colDuree As Long, colCout As Long, colDate As Long, colSexe As Long
+    Dim row As Long, logRow As Long
+    Dim dict As Object
+    Dim spec As String, hop As String, key As String
+    Dim hasChanges As Boolean
+    
+    
+    ' Feuille source (Données) et création des feuilles cibles
+    
+    Set wsData = ThisWorkbook.Worksheets("Données")
+      
+        ' Vérifier si les feuilles existent déjà en bouclant sur les feuilles du classeur
+    Dim feuilleExiste As Boolean
+    feuilleExiste = False
+    Dim ws As Worksheet
+    For Each ws In ThisWorkbook.Sheets
+        If ws.Name = "Base_Complète" Or ws.Name = "Log_Nettoyage" Then
+            feuilleExiste = True
+            Exit For  ' Pas besoin de continuer si trouvé
+        End If
+    Next ws
+    
+    If feuilleExiste Then
+        Dim reponse As VbMsgBoxResult
+        reponse = MsgBox("Les feuilles 'Base_Complète' et/ou 'Log_Nettoyage' existent déjà. Voulez-vous les écraser ?", vbYesNo + vbQuestion, "Confirmation")
+        If reponse = vbNo Then
+            MsgBox "Opération annulée.", vbInformation
+            Exit Sub
+        Else
+            ' Supprimer les feuilles existantes
+            On Error Resume Next  ' Pour éviter erreur si suppression échoue
+            ThisWorkbook.Sheets("Base_Complète").Delete
+            ThisWorkbook.Sheets("Log_Nettoyage").Delete
+            On Error GoTo 0
+        End If
+    End If
+
+
+    Set wsClean = ThisWorkbook.Sheets.Add(After:=wsData)
+    wsClean.Name = "Base_Complète"
+    
+    Set wsLog = ThisWorkbook.Sheets.Add(After:=wsClean)
+    wsLog.Name = "Log_Nettoyage"
+    
+
+    ' Copier toutes les données de Données vers Base_Complète
+    
+    wsData.Cells.Copy wsClean.Cells
+    
+    ' Nettoyer anciens formats de couleur
+    
+    wsClean.Cells.Interior.ColorIndex = xlNone
+    wsLog.Cells.Interior.ColorIndex = xlNone
+    
+    ' Trouver les indices des colonnes
+    colHop = TrouverColonne(wsClean, "Hôpital")
+    colSpec = TrouverColonne(wsClean, "Spécialité")
+    colDuree = TrouverColonne(wsClean, "Durée_Séjour(jours)")
+    colCout = TrouverColonne(wsClean, "Coût(€)")
+    colDate = TrouverColonne(wsClean, "Date_Entrée")
+    colSexe = TrouverColonne(wsClean, "Sexe")
+    
+    ' Vérifier si toutes les colonnes sont trouvées (sinon, erreur)
+    
+    If colHop = 0 Or colSpec = 0 Or colDuree = 0 Or colCout = 0 Or colDate = 0 Or colSexe = 0 Then
+        MsgBox "Erreur : Colonnes obligatoires non trouvées dans Base_Complète.", vbCritical
+        Exit Sub
+    End If
+    
+    lastRow = wsClean.Cells(wsClean.Rows.Count, colHop).End(xlUp).row
+    lastCol = wsClean.Cells(1, wsClean.Columns.Count).End(xlToLeft).Column
+    
+    ' Initialiser le log
+    wsLog.Cells(1, 1) = "Action"
+    wsLog.Cells(1, 2) = "Détails"
+    wsLog.Cells(1, 3) = "Ligne originale"
+    logRow = 2
+    hasChanges = False
+    
+    'Suppression des lignes incomplètes
+    For row = lastRow To 2 Step -1
+        If IsEmpty(wsClean.Cells(row, colCout).Value) Or IsEmpty(wsClean.Cells(row, colDate).Value) Or wsClean.Cells(row, colCout).Value = "n/a" Or Not IsDate(wsClean.Cells(row, colDate).Value) Then
+            wsLog.Cells(logRow, 1) = "Suppression"
+            wsLog.Cells(logRow, 2) = "Ligne incomplète"
+            wsLog.Cells(logRow, 3) = row
+            wsClean.Rows(row).Delete
+            logRow = logRow + 1
+            hasChanges = True
+        End If
+    Next row
+    
+    ' Recalculer lastRow après suppressions
+    lastRow = wsClean.Cells(wsClean.Rows.Count, colHop).End(xlUp).row
+    
+    ' Normaliser les spécialités en majuscules
+    For row = 2 To lastRow
+        spec = Trim(UCase(wsClean.Cells(row, colSpec).Value))
+        Select Case spec
+            Case "CARDIO"
+                wsClean.Cells(row, colSpec) = "CARDIOLOGIE"
+                wsLog.Cells(logRow, 1) = "Correction"
+                wsLog.Cells(logRow, 2) = "Spécialité normalisée : " & spec & " ? CARDIOLOGIE"
+                wsLog.Cells(logRow, 3) = row
+                logRow = logRow + 1
+                hasChanges = True
+            Case "NEURO"
+                wsClean.Cells(row, colSpec) = "NEUROLOGIE"
+                wsLog.Cells(logRow, 1) = "Correction"
+                wsLog.Cells(logRow, 2) = "Spécialité normalisée : " & spec & " ? NEUROLOGIE"
+                wsLog.Cells(logRow, 3) = row
+                logRow = logRow + 1
+                hasChanges = True
+            Case "ONCO"
+                wsClean.Cells(row, colSpec) = "ONCOLOGIE"
+                wsLog.Cells(logRow, 1) = "Correction"
+                wsLog.Cells(logRow, 2) = "Spécialité normalisée : " & spec & " ? ONCOLOGIE"
+                wsLog.Cells(logRow, 3) = row
+                logRow = logRow + 1
+                hasChanges = True
+            
+        End Select
+    Next row
+    
+    ' Supprimer les doublons
+    
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    For row = lastRow To 2 Step -1
+        hop = Trim(wsClean.Cells(row, colHop).Value)
+        key = hop & "|" & wsClean.Cells(row, colDate).Value
+        If dict.Exists(key) Then
+            wsLog.Cells(logRow, 1) = "Suppression"
+            wsLog.Cells(logRow, 2) = "Doublon détecté"
+            wsLog.Cells(logRow, 3) = row
+            wsClean.Rows(row).Delete
+            logRow = logRow + 1
+            hasChanges = True
+        Else
+            dict.Add key, True
+        End If
+    Next row
+    
+    lastRow = wsClean.Cells(wsClean.Rows.Count, colHop).End(xlUp).row
+    
+    ' Nettoyer la casse et les espaces superflus (Sur les colonnes texte)
+    For row = 2 To lastRow
+        wsClean.Cells(row, colHop) = Trim(wsClean.Cells(row, colHop).Value)
+        wsClean.Cells(row, colSpec) = Trim(wsClean.Cells(row, colSpec).Value)
+        wsClean.Cells(row, colSexe) = UCase(Trim(wsClean.Cells(row, colSexe).Value))
+    Next row
+    
+    ' Mise en forme thématique (santé : bleu pour en-têtes, vert pour succès)
+    wsClean.Range(wsClean.Cells(1, 1), wsClean.Cells(1, lastCol)).Interior.Color = RGB(0, 102, 204)  ' Bleu en-têtes
+    wsClean.Range(wsClean.Cells(1, 1), wsClean.Cells(1, lastCol)).Font.Bold = True
+    wsLog.Range("A1:C1").Interior.Color = RGB(0, 102, 204)
+    wsLog.Range("A1:C1").Font.Bold = True
+    If Not hasChanges Then
+        wsClean.Range("A2").Interior.Color = RGB(0, 153, 76)  ' Vert si aucune correction
+    End If
+    
+    ' Message final
+    If hasChanges Then
+        MsgBox "Nettoyage terminé avec corrections. Feuille 'Base_Complète' créée et log dans 'Log_Nettoyage'.", vbInformation
+    Else
+        MsgBox "Aucune correction nécessaire. Feuille 'Base_Complète' créée.", vbInformation
+    End If
+End Sub
+
+
+Option Explicit
+
+Public Sub CalculerIndicateurs()
+    ' ========================================
+    ' Phase 3 : Calcul des indicateurs et création du tableau de bord
+    ' ========================================
+    
+    Dim wbSource As Workbook
+    Dim wsSource As Worksheet
+    Dim wbNew As Workbook
+    Dim wsInd As Worksheet, wsGraph As Worksheet, wsAnalyse As Worksheet
+    Dim lastRow As Long
+    Dim colHop As Long, colSpec As Long, colDuree As Long, colCout As Long, colDate As Long, colSexe As Long
+    Dim specList() As String
+    Dim hopList() As String
+    Dim specCount As Long, hopCount As Long
+    Dim specDuree() As Double, specCout() As Double, specNb() As Long
+    Dim specHommes() As Long, specFemmes() As Long
+    Dim hopNb() As Long
+    Dim moisCount(1 To 12) As Long
+    Dim spec As String, hop As String, sexe As String
+    Dim row As Long, i As Long, j As Long, k As Long, mois As Long
+    Dim found As Boolean
+    Dim moyDuree As Double, moyCout As Double, moyCoutJour As Double
+    Dim topSpec(1 To 3) As String, topHop(1 To 3) As String
+    Dim maxSpec(1 To 3) As Double, maxHop(1 To 3) As Long
+    Dim rowSection As Long
+    Dim coutTotal As Double
+    Dim rowDureeStart As Long, rowCoutStart As Long, rowCoutJourStart As Long
+    Dim rowHopStart As Long, rowHFStart As Long
+    
+    ' Ouvrir le classeur source
+    Set wbSource = ThisWorkbook
+    
+    ' Vérifier si Base_Complète existe
+    On Error Resume Next
+    Set wsSource = wbSource.Worksheets("Base_Complète")
+    On Error GoTo 0
+    
+    If wsSource Is Nothing Then
+        MsgBox "Feuille 'Base_Complète' non trouvée." & vbCrLf & _
+               "Veuillez exécuter la Phase 2 (Nettoyage) d'abord.", vbCritical, "Erreur"
+        Exit Sub
+    End If
+    
+    ' Trouver les colonnes
+    colHop = TrouverColonne(wsSource, "Hôpital")
+    colSpec = TrouverColonne(wsSource, "Spécialité")
+    colDuree = TrouverColonne(wsSource, "Durée_Séjour(jours)")
+    colCout = TrouverColonne(wsSource, "Coût(€)")
+    colDate = TrouverColonne(wsSource, "Date_Entrée")
+    colSexe = TrouverColonne(wsSource, "Sexe")
+    
+    If colHop = 0 Or colSpec = 0 Or colDuree = 0 Or colCout = 0 Or colDate = 0 Or colSexe = 0 Then
+        MsgBox "Colonnes obligatoires non trouvées dans Base_Complète.", vbCritical, "Erreur"
+        Exit Sub
+    End If
+    
+    lastRow = wsSource.Cells(wsSource.Rows.Count, colHop).End(xlUp).row
+    
+    If lastRow < 2 Then
+        MsgBox "Aucune donnée à analyser dans Base_Complète.", vbExclamation, "Attention"
+        Exit Sub
+    End If
+    
+    ' ========================================
+    ' Collecte des données uniques
+    ' ========================================
+    
+    ReDim specList(0) As String
+    ReDim hopList(0) As String
+    specCount = 0
+    hopCount = 0
+    
+    ' Première passe : collecter spécialités et hôpitaux uniques
+    For row = 2 To lastRow
+        spec = Trim(wsSource.Cells(row, colSpec).Value)
+        hop = Trim(wsSource.Cells(row, colHop).Value)
+        
+        ' Ajouter spécialité si nouvelle
+        found = False
+        For i = 0 To specCount - 1
+            If specList(i) = spec Then
+                found = True
+                Exit For
+            End If
+        Next i
+        If Not found Then
+            ReDim Preserve specList(specCount) As String
+            specList(specCount) = spec
+            specCount = specCount + 1
+        End If
+        
+        ' Ajouter hôpital si nouveau
+        found = False
+        For i = 0 To hopCount - 1
+            If hopList(i) = hop Then
+                found = True
+                Exit For
+            End If
+        Next i
+        If Not found Then
+            ReDim Preserve hopList(hopCount) As String
+            hopList(hopCount) = hop
+            hopCount = hopCount + 1
+        End If
+    Next row
+    
+    ' Redimensionner tableaux d'agrégation
+    ReDim specDuree(specCount - 1) As Double
+    ReDim specCout(specCount - 1) As Double
+    ReDim specNb(specCount - 1) As Long
+    ReDim specHommes(specCount - 1) As Long
+    ReDim specFemmes(specCount - 1) As Long
+    ReDim hopNb(hopCount - 1) As Long
+    
+    ' ========================================
+    ' Agrégation des données
+    ' ========================================
+    
+    For row = 2 To lastRow
+        spec = Trim(wsSource.Cells(row, colSpec).Value)
+        hop = Trim(wsSource.Cells(row, colHop).Value)
+        sexe = UCase(Trim(wsSource.Cells(row, colSexe).Value))
+        
+        ' Extraire le mois si la date est valide
+        If IsDate(wsSource.Cells(row, colDate).Value) Then
+            mois = Month(wsSource.Cells(row, colDate).Value)
+            moisCount(mois) = moisCount(mois) + 1
+        End If
+        
+        ' Trouver index spécialité et agréger
+        For i = 0 To specCount - 1
+            If specList(i) = spec Then
+                specDuree(i) = specDuree(i) + val(wsSource.Cells(row, colDuree).Value)
+                specCout(i) = specCout(i) + val(wsSource.Cells(row, colCout).Value)
+                specNb(i) = specNb(i) + 1
+                ' Répartition H/F
+                If sexe = "H" Or sexe = "M" Then
+                    specHommes(i) = specHommes(i) + 1
+                ElseIf sexe = "F" Then
+                    specFemmes(i) = specFemmes(i) + 1
+                End If
+                Exit For
+            End If
+        Next i
+        
+        ' Trouver index hôpital et agréger
+        For i = 0 To hopCount - 1
+            If hopList(i) = hop Then
+                hopNb(i) = hopNb(i) + 1
+                Exit For
+            End If
+        Next i
+    Next row
+    
+    ' ========================================
+    ' Créer/Vider feuille "Analyse"
+    ' ========================================
+    
+    On Error Resume Next
+    Set wsAnalyse = wbSource.Worksheets("Analyse")
+    On Error GoTo 0
+    
+    If Not wsAnalyse Is Nothing Then
+        Dim reponse As VbMsgBoxResult
+        reponse = MsgBox("La feuille 'Analyse' existe déjà. Voulez-vous l'écraser ?", _
+                         vbYesNo + vbQuestion, "Confirmation")
+        If reponse = vbNo Then
+            MsgBox "Opération annulée.", vbInformation
+            Exit Sub
+        Else
+            wsAnalyse.Cells.Clear
+        End If
+    Else
+        Set wsAnalyse = wbSource.Worksheets.Add(After:=wbSource.Worksheets(wbSource.Worksheets.Count))
+        wsAnalyse.Name = "Analyse"
+    End If
+    
+    ' ========================================
+    ' Construction du tableau d'analyse
+    ' ========================================
+    
+    ' En-tête principal
+    wsAnalyse.Cells(1, 1) = "TABLEAU DE BORD HOSPITALIER"
+    wsAnalyse.Cells(1, 1).Font.Bold = True
+    wsAnalyse.Cells(1, 1).Font.Size = 16
+    wsAnalyse.Cells(1, 1).Interior.Color = RGB(0, 102, 204)
+    wsAnalyse.Cells(1, 1).Font.Color = vbWhite
+    wsAnalyse.Range("A1:B1").Merge
+    wsAnalyse.Range("A1:B1").HorizontalAlignment = xlCenter
+    
+    rowSection = 3
+    
+    ' ========================================
+    ' SECTION : Synthèse globale
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "SYNTHÈSE GLOBALE"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Nombre total de séjours"
+    wsAnalyse.Cells(rowSection, 2) = lastRow - 1
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Nombre de spécialités"
+    wsAnalyse.Cells(rowSection, 2) = specCount
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Nombre d'hôpitaux"
+    wsAnalyse.Cells(rowSection, 2) = hopCount
+    rowSection = rowSection + 1
+    
+    ' Calcul du coût total
+    coutTotal = 0
+    For i = 0 To specCount - 1
+        coutTotal = coutTotal + specCout(i)
+    Next i
+    wsAnalyse.Cells(rowSection, 1) = "Coût total"
+    wsAnalyse.Cells(rowSection, 2) = Round(coutTotal, 2)
+    wsAnalyse.Cells(rowSection, 2).NumberFormat = "#,##0.00 ""€"""
+    rowSection = rowSection + 2
+    
+    ' ========================================
+    ' SECTION 1 : Durée moyenne par spécialité
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "DURÉE MOYENNE DE SÉJOUR PAR SPÉCIALITÉ"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Spécialité"
+    wsAnalyse.Cells(rowSection, 2) = "Durée moyenne (jours)"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    rowDureeStart = rowSection
+    For i = 0 To specCount - 1
+        If specNb(i) > 0 Then
+            moyDuree = specDuree(i) / specNb(i)
+            wsAnalyse.Cells(rowSection, 1) = specList(i)
+            wsAnalyse.Cells(rowSection, 2) = Round(moyDuree, 2)
+            wsAnalyse.Cells(rowSection, 2).NumberFormat = "0.00"
+            rowSection = rowSection + 1
+        End If
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 2 : Coût moyen par spécialité
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "COÛT MOYEN PAR SPÉCIALITÉ"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Spécialité"
+    wsAnalyse.Cells(rowSection, 2) = "Coût moyen (€)"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    rowCoutStart = rowSection
+    For i = 0 To specCount - 1
+        If specNb(i) > 0 Then
+            moyCout = specCout(i) / specNb(i)
+            wsAnalyse.Cells(rowSection, 1) = specList(i)
+            wsAnalyse.Cells(rowSection, 2) = Round(moyCout, 2)
+            wsAnalyse.Cells(rowSection, 2).NumberFormat = "#,##0.00 ""€"""
+            rowSection = rowSection + 1
+        End If
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 3 : Coût moyen par jour
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "COÛT MOYEN PAR JOUR DE SÉJOUR"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Spécialité"
+    wsAnalyse.Cells(rowSection, 2) = "Coût/jour (€)"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    rowCoutJourStart = rowSection
+    For i = 0 To specCount - 1
+        If specDuree(i) > 0 Then
+            moyCoutJour = specCout(i) / specDuree(i)
+            wsAnalyse.Cells(rowSection, 1) = specList(i)
+            wsAnalyse.Cells(rowSection, 2) = Round(moyCoutJour, 2)
+            wsAnalyse.Cells(rowSection, 2).NumberFormat = "#,##0.00 ""€"""
+            rowSection = rowSection + 1
+        End If
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 4 : Nombre de séjours par hôpital
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "NOMBRE DE SÉJOURS PAR HÔPITAL"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Hôpital"
+    wsAnalyse.Cells(rowSection, 2) = "Nombre de séjours"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    rowHopStart = rowSection
+    For i = 0 To hopCount - 1
+        wsAnalyse.Cells(rowSection, 1) = hopList(i)
+        wsAnalyse.Cells(rowSection, 2) = hopNb(i)
+        rowSection = rowSection + 1
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 5 : Répartition H/F par spécialité
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "RÉPARTITION HOMMES/FEMMES PAR SPÉCIALITÉ"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 220, 255)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Spécialité"
+    wsAnalyse.Cells(rowSection, 2) = "Nombre"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    rowHFStart = rowSection
+    For i = 0 To specCount - 1
+        wsAnalyse.Cells(rowSection, 1) = specList(i) & " - Hommes"
+        wsAnalyse.Cells(rowSection, 2) = specHommes(i)
+        rowSection = rowSection + 1
+        wsAnalyse.Cells(rowSection, 1) = specList(i) & " - Femmes"
+        wsAnalyse.Cells(rowSection, 2) = specFemmes(i)
+        rowSection = rowSection + 1
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 6 : Top 3 spécialités coûteuses
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "TOP 3 SPÉCIALITÉS LES PLUS COÛTEUSES"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(255, 200, 200)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Spécialité"
+    wsAnalyse.Cells(rowSection, 2) = "Coût moyen (€)"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    ' Initialiser tops
+    For i = 1 To 3
+        maxSpec(i) = -1
+        topSpec(i) = ""
+    Next i
+    
+    ' Trouver top 3
+    For i = 0 To specCount - 1
+        If specNb(i) > 0 Then
+            moyCout = specCout(i) / specNb(i)
+            For j = 1 To 3
+                If moyCout > maxSpec(j) Then
+                    For k = 3 To j + 1 Step -1
+                        maxSpec(k) = maxSpec(k - 1)
+                        topSpec(k) = topSpec(k - 1)
+                    Next k
+                    maxSpec(j) = moyCout
+                    topSpec(j) = specList(i)
+                    Exit For
+                End If
+            Next j
+        End If
+    Next i
+    
+    ' Écrire top 3
+    For i = 1 To 3
+        If topSpec(i) <> "" Then
+            wsAnalyse.Cells(rowSection, 1) = i & ". " & topSpec(i)
+            wsAnalyse.Cells(rowSection, 2) = Round(maxSpec(i), 2)
+            wsAnalyse.Cells(rowSection, 2).NumberFormat = "#,##0.00 ""€"""
+            rowSection = rowSection + 1
+        End If
+    Next i
+    rowSection = rowSection + 1
+    
+    ' ========================================
+    ' SECTION 7 : Top 3 hôpitaux fréquentés
+    ' ========================================
+    
+    wsAnalyse.Cells(rowSection, 1) = "TOP 3 HÔPITAUX LES PLUS FRÉQUENTÉS"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 1).Interior.Color = RGB(200, 255, 200)
+    rowSection = rowSection + 1
+    
+    wsAnalyse.Cells(rowSection, 1) = "Hôpital"
+    wsAnalyse.Cells(rowSection, 2) = "Nombre de séjours"
+    wsAnalyse.Cells(rowSection, 1).Font.Bold = True
+    wsAnalyse.Cells(rowSection, 2).Font.Bold = True
+    rowSection = rowSection + 1
+    
+    ' Initialiser tops
+    For i = 1 To 3
+        maxHop(i) = -1
+        topHop(i) = ""
+    Next i
+    
+    ' Trouver top 3
+    For i = 0 To hopCount - 1
+        For j = 1 To 3
+            If hopNb(i) > maxHop(j) Then
+                For k = 3 To j + 1 Step -1
+                    maxHop(k) = maxHop(k - 1)
+                    topHop(k) = topHop(k - 1)
+                Next k
+                maxHop(j) = hopNb(i)
+                topHop(j) = hopList(i)
+                Exit For
+            End If
+        Next j
+    Next i
+    
+    ' Écrire top 3
+    For i = 1 To 3
+        If topHop(i) <> "" Then
+            wsAnalyse.Cells(rowSection, 1) = i & ". " & topHop(i)
+            wsAnalyse.Cells(rowSection, 2) = maxHop(i)
+            rowSection = rowSection + 1
+        End If
+    Next i
+    
+    ' Ajuster colonnes et activer filtres
+    wsAnalyse.Columns("A:B").AutoFit
+    wsAnalyse.Range("A3:B" & rowSection - 1).AutoFilter
+    
+    ' ========================================
+    ' Créer nouveau classeur pour tableau de bord
+    ' ========================================
+    
+    Set wbNew = Workbooks.Add
+    
+    ' Feuille Indicateurs (copie de Analyse)
+    Set wsInd = wbNew.Worksheets(1)
+    wsInd.Name = "Indicateurs"
+    
+    wsAnalyse.Cells.Copy
+    wsInd.Cells.PasteSpecial xlPasteAll
+    Application.CutCopyMode = False
+    
+    ' ========================================
+    ' Feuille Graphiques
+    ' ========================================
+    
+    Set wsGraph = wbNew.Worksheets.Add(After:=wsInd)
+    wsGraph.Name = "Graphiques"
+    
+    ' Graphique 1 : Durée moyenne (barres)
+    Dim rngDuree As Range
+    Set rngDuree = wsInd.Range(wsInd.Cells(rowDureeStart - 1, 1), wsInd.Cells(rowDureeStart + specCount - 2, 2))
+    
+    With wsGraph.Shapes.AddChart2(201, xlColumnClustered).Chart
+        .SetSourceData rngDuree
+        .ChartTitle.Text = "Durée Moyenne de Séjour par Spécialité"
+        .ChartStyle = 26
+        .HasLegend = False
+    End With
+    
+    wsGraph.ChartObjects(1).Left = 10
+    wsGraph.ChartObjects(1).Top = 10
+    wsGraph.ChartObjects(1).Width = 400
+    wsGraph.ChartObjects(1).Height = 300
+    
+    ' Graphique 2 : Coût moyen (barres)
+    Dim rngCout As Range
+    Set rngCout = wsInd.Range(wsInd.Cells(rowCoutStart - 1, 1), wsInd.Cells(rowCoutStart + specCount - 2, 2))
+    
+    With wsGraph.Shapes.AddChart2(201, xlColumnClustered).Chart
+        .SetSourceData rngCout
+        .ChartTitle.Text = "Coût Moyen par Spécialité"
+        .ChartStyle = 27
+        .HasLegend = False
+    End With
+    
+    wsGraph.ChartObjects(2).Left = 450
+    wsGraph.ChartObjects(2).Top = 10
+    wsGraph.ChartObjects(2).Width = 400
+    wsGraph.ChartObjects(2).Height = 300
+    
+    ' Graphique 3 : Séjours par hôpital (camembert)
+    Dim rngHop As Range
+    Set rngHop = wsInd.Range(wsInd.Cells(rowHopStart - 1, 1), wsInd.Cells(rowHopStart + hopCount - 2, 2))
+    
+    With wsGraph.Shapes.AddChart2(251, xlPie).Chart
+        .SetSourceData rngHop
+        .ChartTitle.Text = "Nombre de Séjours par Hôpital"
+        .ChartStyle = 26
+    End With
+    
+    wsGraph.ChartObjects(3).Left = 10
+    wsGraph.ChartObjects(3).Top = 350
+    wsGraph.ChartObjects(3).Width = 400
+    wsGraph.ChartObjects(3).Height = 300
+    
+    ' Graphique 4 : Répartition H/F (barres groupées)
+    Dim rngHF As Range
+    Set rngHF = wsInd.Range(wsInd.Cells(rowHFStart - 1, 1), wsInd.Cells(rowHFStart + 2 * specCount - 2, 2))
+    
+    With wsGraph.Shapes.AddChart2(201, xlColumnClustered).Chart
+        .SetSourceData rngHF
+        .ChartTitle.Text = "Répartition Hommes/Femmes par Spécialité"
+        .ChartStyle = 28
+    End With
+    
+    wsGraph.ChartObjects(4).Left = 450
+    wsGraph.ChartObjects(4).Top = 350
+    wsGraph.ChartObjects(4).Width = 400
+    wsGraph.ChartObjects(4).Height = 300
+    
+    
+        ' ========================================
+    ' Créer le dossier pour les rapports (si nécessaire)
+    ' ========================================
+    
+    Dim folderPath As String
+    folderPath = ThisWorkbook.Path & "\Rapports_Hospitaliers"
+    
+    ' Vérifier si le dossier existe ; sinon, le créer
+    If Dir(folderPath, vbDirectory) = "" Then
+        MkDir folderPath
+    End If
+    
+    ' ========================================
+    ' Sauvegarder le nouveau classeur
+    ' ========================================
+    
+    Dim savePath As String
+    savePath = folderPath & "\Tableau_de_Bord_Hospitalier_" & Format(Now, "yyyymmdd_hhmmss") & ".xlsx"
+    
+    
+    On Error Resume Next
+    wbNew.SaveAs savePath
+    On Error GoTo 0
+    
+    ' Message final
+    MsgBox "Indicateurs calculés avec succès !" & vbCrLf & vbCrLf & _
+           "? Feuille 'Analyse' créée dans le classeur actuel" & vbCrLf & _
+           "? Tableau de bord exporté vers :" & vbCrLf & _
+           savePath & vbCrLf & vbCrLf & _
+           "Statistiques :" & vbCrLf & _
+           "  • " & (lastRow - 1) & " séjours analysés" & vbCrLf & _
+           "  • " & specCount & " spécialités" & vbCrLf & _
+           "  • " & hopCount & " hôpitaux", _
+           vbInformation, "Calcul des indicateurs terminé"
+    
+    ' Activer le nouveau classeur
+    wbNew.Activate
+    wsGraph.Activate
+    
+End Sub
+
+
+Option Explicit
+
+Public Sub ConsoliderFichiersMois()
+    ' Phase 4 - Consolidation multi-fichiers (mensualisation)
+    ' Modification : Ajout de débogage et option manuelle si fichier non trouvé automatiquement
+    
+    Dim wbNew As Workbook  ' Nouveau classeur (Tableau de Bord Hospitalier)
+    Dim wsComplete As Worksheet
+    Dim folderPath As String
+    Dim fileName As String
+    Dim wbTemp As Workbook
+    Dim wsTemp As Worksheet
+    Dim lastRowTemp As Long, lastColTemp As Long
+    Dim colHop As Long, colSpec As Long, colDuree As Long, colCout As Long, colDate As Long, colSexe As Long
+    Dim row As Long, col As Long
+    Dim dataArray() As Variant  ' Tableau dynamique pour collecter toutes les données nettoyées
+    Dim dataCount As Long
+    Dim i As Long, j As Long
+    Dim spec As String
+    Dim hasData As Boolean
+    Dim reportsFolder As String
+    Dim latestFile As String
+    Dim latestDate As Date
+    Dim fileList As String  ' Pour débogage : liste des fichiers trouvés
+    
+    ' Dossier des rapports (de Phase 3)
+    reportsFolder = ThisWorkbook.Path & "\Rapports_Hospitaliers"
+    
+    ' Vérifier si le dossier existe
+    If Dir(reportsFolder, vbDirectory) = "" Then
+        MsgBox "Dossier 'Rapports_Hospitaliers' introuvable. Veuillez exécuter la Phase 3 d'abord.", vbCritical
+        Exit Sub
+    End If
+    
+    ' Trouver le dernier fichier "Tableau_de_Bord_Hospitalier_*.xlsx" dans le dossier
+    latestFile = ""
+    latestDate = #1/1/1900#
+    fileList = ""  ' Initialiser pour débogage
+    fileName = Dir(reportsFolder & "\Tableau_de_Bord_Hospitalier_*.xlsx")
+    Do While fileName <> ""
+        fileList = fileList & fileName & vbCrLf  ' Ajouter à la liste pour débogage
+        Dim fileDate As Date
+        ' Extraire la date du nom de fichier (format yyyymmdd_hhmmss)
+        Dim dateStr As String
+        dateStr = Mid(fileName, Len("Tableau_de_Bord_Hospitalier_") + 1, 15)  ' yyyymmdd_hhmmss
+        If Len(dateStr) = 15 And IsNumeric(Replace(dateStr, "_", "")) Then  ' Vérifier format
+            On Error Resume Next
+            fileDate = DateSerial(Left(dateStr, 4), Mid(dateStr, 5, 2), Mid(dateStr, 7, 2)) + _
+                       TimeSerial(Mid(dateStr, 10, 2), Mid(dateStr, 13, 2), Right(dateStr, 2))
+            On Error GoTo 0
+            If fileDate > latestDate Then
+                latestDate = fileDate
+                latestFile = fileName
+            End If
+        End If
+        fileName = Dir()
+    Loop
+    
+    ' Si aucun fichier trouvé automatiquement, afficher débogage et proposer sélection manuelle
+    If latestFile = "" Then
+        Dim response As VbMsgBoxResult
+        response = MsgBox("Aucun fichier 'Tableau_de_Bord_Hospitalier_' trouvé automatiquement." & vbCrLf & vbCrLf & _
+                          "Dossier vérifié : " & reportsFolder & vbCrLf & _
+                          "Fichiers trouvés (tous .xlsx) : " & vbCrLf & fileList & vbCrLf & _
+                          "Voulez-vous sélectionner le fichier manuellement ?", vbYesNo + vbQuestion, "Fichier non trouvé")
+        If response = vbYes Then
+            ' Sélection manuelle du fichier
+            With Application.FileDialog(msoFileDialogFilePicker)
+                .Title = "Sélectionnez le fichier Tableau_de_Bord_Hospitalier_.xlsx"
+                .Filters.Add "Fichiers Excel", "*.xlsx"
+                .InitialFileName = reportsFolder
+                If .Show = -1 Then
+                    latestFile = .SelectedItems(1)
+                    ' Extraire seulement le nom de fichier
+                    latestFile = Mid(latestFile, InStrRev(latestFile, "\") + 1)
+                Else
+                    MsgBox "Aucun fichier sélectionné. Opération annulée.", vbInformation
+                    Exit Sub
+                End If
+            End With
+        Else
+            MsgBox "Opération annulée.", vbInformation
+            Exit Sub
+        End If
+    End If
+    
+    ' Ouvrir le classeur sélectionné (automatique ou manuel)
+    Set wbNew = Workbooks.Open(reportsFolder & "\" & latestFile)
+    
+    ' Sélectionner le dossier contenant les fichiers mensuels
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Sélectionnez le dossier contenant les fichiers mensuels"
+        If .Show = -1 Then
+            folderPath = .SelectedItems(1)
+        Else
+            MsgBox "Aucun dossier sélectionné. Opération annulée.", vbInformation
+            wbNew.Close False
+            Exit Sub
+        End If
+    End With
+    
+    ' Initialiser tableau pour collecter données
+    ReDim dataArray(1 To 10000, 1 To 6)  ' Lignes max estimées, colonnes : Hôpital, Spécialité, Durée, Coût, Date, Sexe
+    dataCount = 0
+    
+    ' Boucler sur tous les fichiers .xlsx dans le dossier
+    fileName = Dir(folderPath & "\*.xlsx")
+    Do While fileName <> ""
+        ' Ouvrir le fichier temporairement
+        Set wbTemp = Workbooks.Open(folderPath & "\" & fileName, ReadOnly:=True)
+        Set wsTemp = wbTemp.Worksheets("Données")
+        
+        If wsTemp Is Nothing Then
+            MsgBox "Feuille 'Données' manquante dans " & fileName & ". Ignoré.", vbExclamation
+            wbTemp.Close False
+            GoTo NextFile
+        End If
+        
+        ' Trouver colonnes
+        colHop = TrouverColonne(wsTemp, "Hôpital")
+        colSpec = TrouverColonne(wsTemp, "Spécialité")
+        colDuree = TrouverColonne(wsTemp, "Durée_Séjour(jours)")
+        colCout = TrouverColonne(wsTemp, "Coût(€)")
+        colDate = TrouverColonne(wsTemp, "Date_Entrée")
+        colSexe = TrouverColonne(wsTemp, "Sexe")
+        
+        If colHop = 0 Or colSpec = 0 Or colDuree = 0 Or colCout = 0 Or colDate = 0 Or colSexe = 0 Then
+            MsgBox "Colonnes obligatoires manquantes dans " & fileName & ". Ignoré.", vbExclamation
+            wbTemp.Close False
+            GoTo NextFile
+        End If
+        
+        lastRowTemp = wsTemp.Cells(wsTemp.Rows.Count, colHop).End(xlUp).row
+        
+        ' Normaliser et collecter données (logique similaire à Phase 2)
+        For row = 2 To lastRowTemp
+            ' Vérifier lignes complètes
+            If IsEmpty(wsTemp.Cells(row, colCout).Value) Or IsEmpty(wsTemp.Cells(row, colDate).Value) Or _
+               wsTemp.Cells(row, colCout).Value = "n/a" Or Not IsDate(wsTemp.Cells(row, colDate).Value) Then
+                GoTo NextRow  ' Ignorer ligne incomplète
+            End If
+            
+            ' Normaliser spécialité
+            spec = Trim(UCase(wsTemp.Cells(row, colSpec).Value))
+            Select Case spec
+                Case "CARDIO"
+                    spec = "CARDIOLOGIE"
+                Case "NEURO"
+                    spec = "NEUROLOGIE"
+                Case "ONCO"
+                    spec = "ONCOLOGIE"
+            End Select
+            
+            ' Ajouter au tableau
+            dataCount = dataCount + 1
+            If dataCount > UBound(dataArray, 1) Then
+                ReDim Preserve dataArray(1 To dataCount + 1000, 1 To 6)
+            End If
+            dataArray(dataCount, 1) = Trim(wsTemp.Cells(row, colHop).Value)
+            dataArray(dataCount, 2) = spec
+            dataArray(dataCount, 3) = val(wsTemp.Cells(row, colDuree).Value)
+            dataArray(dataCount, 4) = val(wsTemp.Cells(row, colCout).Value)
+            dataArray(dataCount, 5) = wsTemp.Cells(row, colDate).Value
+            dataArray(dataCount, 6) = UCase(Trim(wsTemp.Cells(row, colSexe).Value))
+            
+NextRow:
+        Next row
+        
+        wbTemp.Close False
+NextFile:
+        fileName = Dir()
+    Loop
+    
+    If dataCount = 0 Then
+        MsgBox "Aucune donnée valide trouvée dans les fichiers.", vbExclamation
+        wbNew.Close False
+        Exit Sub
+    End If
+    
+    ' Créer feuille "Base_Complete" dans wbNew (nouveau classeur)
+    On Error Resume Next
+    Set wsComplete = wbNew.Worksheets("Base_Complete")
+    On Error GoTo 0
+    If Not wsComplete Is Nothing Then
+        wsComplete.Cells.Clear
+    Else
+        Set wsComplete = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
+        wsComplete.Name = "Base_Complete"
+    End If
+    
+    ' Écrire en-têtes
+    wsComplete.Cells(1, 1) = "Hôpital"
+    wsComplete.Cells(1, 2) = "Spécialité"
+    wsComplete.Cells(1, 3) = "Durée_Séjour(jours)"
+    wsComplete.Cells(1, 4) = "Coût(€)"
+    wsComplete.Cells(1, 5) = "Date_Entrée"
+    wsComplete.Cells(1, 6) = "Sexe"
+    wsComplete.Range("A1:F1").Interior.Color = RGB(0, 102, 204)
+    wsComplete.Range("A1:F1").Font.Bold = True
+    
+    ' Écrire données consolidées
+    For i = 1 To dataCount
+        For j = 1 To 6
+            wsComplete.Cells(i + 1, j) = dataArray(i, j)
+        Next j
+    Next i
+    
+    ' Ajuster colonnes
+    wsComplete.Columns("A:F").AutoFit
+    
+    ' Sauvegarder wbNew
+    On Error Resume Next
+    wbNew.Save
+    On Error GoTo 0
+    
+    MsgBox "Consolidation terminée !" & vbCrLf & vbCrLf & _
+           "• " & dataCount & " lignes consolidées dans 'Base_Complete' du classeur Tableau de Bord Hospitalier" & vbCrLf & _
+           "• Classeur sauvegardé.", vbInformation
+    
+    ' Activer wbNew
+    wbNew.Activate
+    wsComplete.Activate
+End Sub
